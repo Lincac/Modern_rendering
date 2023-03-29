@@ -1,0 +1,152 @@
+#version 460 core
+
+#define TEXEL_SIZE 16
+
+layout (local_size_x = TEXEL_SIZE,local_size_y = TEXEL_SIZE,local_size_z = 1) in;
+
+#define Light_PARA 2
+
+struct Light{
+    vec4 position;
+    vec4 color;
+};
+
+struct VisalbeIndex{
+    int index;
+};
+
+layout(std430, binding = 0) readonly buffer LightBuffer  {
+    Light data[];
+}lightBuffer;
+
+layout(std430, binding = 1) writeonly buffer VisalbeIndexBuffer  {
+    VisalbeIndex data[];
+}visalbeindexBuffer;
+
+shared uint minDepthInt;
+shared uint maxDepthInt;
+shared uint VisableLightCount;
+shared int VisalbeLightIndex[256];
+shared vec4 frustumPlanes[6];
+shared mat4 VP;
+
+uniform sampler2D depthMap;
+
+uniform mat4 view;
+uniform mat4 projection;
+uniform vec2 screenSize;
+uniform int lightCount;
+
+const float near_plane = 0.1f;
+const float far_plane = 500.0f;
+float LinearizeDepth(float depth)
+{
+    float z = depth * 2.0 - 1.0; // Back to NDC 
+    return (2.0 * near_plane * far_plane) / (far_plane + near_plane - z * (far_plane - near_plane));	
+}
+
+// gl_GlobalInvocationID 这里对应的纹素是局部工作区的ID，我们在外部已经将它分解为（16 * 16） * 80
+// 所以这里的ID纹素对应的是一个（16 * 16）的纹素
+void main(){
+    ivec2 globalID = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 workID = ivec2(gl_WorkGroupID.xy);
+    ivec2 localID = ivec2(gl_LocalInvocationID.xy);
+    ivec2 workNum = ivec2(gl_NumWorkGroups.xy);
+    uint _globalindex =  workID.y * workNum.x + workID.x;// 当前Tile索引
+
+    vec2 uv = gl_GlobalInvocationID.xy / screenSize; 
+
+    if(gl_LocalInvocationIndex == 0){
+        minDepthInt = 0xFFFFFFFF;
+        maxDepthInt = 0;
+        VisableLightCount = 0;
+        VP = projection * view;
+    }
+
+    barrier(); // 用来同步着色器中的线程对共享内存的读写操作
+
+    float maxDepth,minDepth;
+    float depth = texture(depthMap,uv).r;
+
+    // 线性深度
+    depth = LinearizeDepth(depth);
+    //depth = (0.5 * projection[3][2]) / (depth + 0.5 * projection[2][2] -0.5);
+    uint depthInt = floatBitsToUint(depth);
+
+    // 此处用于多线程之中比较
+	atomicMin(minDepthInt, depthInt);
+	atomicMax(maxDepthInt, depthInt);
+
+    barrier();
+
+    if(gl_LocalInvocationIndex == 0){
+        minDepth = uintBitsToFloat(minDepthInt);
+		maxDepth = uintBitsToFloat(maxDepthInt);
+
+		// 计算每个tile的偏移 ?
+		vec2 negativeStep = (2.0 * vec2(workID)) / vec2(workNum);
+		vec2 positiveStep = (2.0 * vec2(workID + ivec2(1, 1))) / vec2(workNum);
+
+		// 获取锥体的六个平面
+		frustumPlanes[0] = vec4(1.0, 0.0, 0.0, 1.0 - negativeStep.x); // Left
+		frustumPlanes[1] = vec4(-1.0, 0.0, 0.0, -1.0 + positiveStep.x); // Right
+		frustumPlanes[2] = vec4(0.0, 1.0, 0.0, 1.0 - negativeStep.y); // Bottom
+		frustumPlanes[3] = vec4(0.0, -1.0, 0.0, -1.0 + positiveStep.y); // Top
+		frustumPlanes[4] = vec4(0.0, 0.0, -1.0, -minDepth); // Near
+		frustumPlanes[5] = vec4(0.0, 0.0, 1.0, maxDepth); // Far
+
+        for(int i=0;i<4;i++){
+            frustumPlanes[i] *= VP;
+            frustumPlanes[i] /= length(frustumPlanes[i].xyz);   
+        }   
+        
+		// 变换远近深度平面
+		frustumPlanes[4] *= view; // (0,-1)
+		frustumPlanes[4] /= length(frustumPlanes[4].xyz);
+		frustumPlanes[5] *= view;// (0,-1)
+		frustumPlanes[5] /= length(frustumPlanes[5].xyz);
+    }
+
+    barrier();
+
+    uint threadCount = TEXEL_SIZE * TEXEL_SIZE;// 并行
+    uint passCount = (lightCount + threadCount - 1) / threadCount; // 每256个光源一个计算pass
+    for(int i=0;i<passCount;i++){
+        uint lightID = i * threadCount + gl_LocalInvocationIndex;
+        if(lightID >= lightCount){
+            break;
+        }
+
+        vec4 position = vec4(lightBuffer.data[lightID].position.xyz,1.0);
+        float radius = lightBuffer.data[lightID].position.w;
+        
+        // 灯光在视锥体内？ 为什么不是光线能够达到该视锥体？
+        float distance = 0;
+        for(int j=0;j<6;j++){
+            distance = dot(position,frustumPlanes[j]) + radius; // 点到直线的距离
+            if(distance <= 0.0){
+                break;
+            }
+        }
+
+        if(distance > 0.0){
+            uint offset = atomicAdd(VisableLightCount,1); //如果多个线程同时对同一个变量进行加法操作，可能会导致竞争条件
+            //atomicAdd 函数可以保证对变量的操作是原子的
+
+            VisalbeLightIndex[offset] = int(lightID);
+        }
+    }
+
+    barrier();
+
+    if(gl_LocalInvocationIndex == 0){
+        uint offset = _globalindex * 256; // 每个Tile可以判断256个灯光
+        for(int i=0;i<VisableLightCount;i++){
+            visalbeindexBuffer.data[offset + i].index = VisalbeLightIndex[i];
+        }
+
+        if(VisableLightCount != 256){
+            visalbeindexBuffer.data[offset + VisableLightCount].index = -1;
+        }
+    }
+}
