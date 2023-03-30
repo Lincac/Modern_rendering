@@ -11,6 +11,8 @@ TAA
 SSR  
 ![0(R3M@)EYA(Q}8Q @2RI9F2](https://user-images.githubusercontent.com/83110022/228444171-5d9641bf-5793-45f2-9378-da7c0938f1fb.png)  
 
+# 更新  
+添加模型简化渲染中...  
 
 # 参考  
 TAA ： https://zhuanlan.zhihu.com/p/479530563  
