@@ -1,6 +1,6 @@
 # Modern_rendering  
 
-包含了前言渲染技术TAA、SSAO、SSR、Light_Culling、PBR、MSAA、Defer_render  
+包含了前沿渲染技术TAA、SSAO、SSR、Light_Culling、PBR、MSAA、Defer_render  
 
 light—culling（包含100个灯光）  
 ![light_culling](https://user-images.githubusercontent.com/83110022/228443606-76fa4bdf-2eaf-4ab2-a826-3cb9df5f5521.png)  
