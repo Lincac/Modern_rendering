@@ -5,12 +5,11 @@
       <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
       <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
     </Filter>
-    <Filter Include="资源文件">
-      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
-      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
-    </Filter>
     <Filter Include="Tool">
       <UniqueIdentifier>{990a6742-fc1d-4278-904a-33949f48ba84}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Imgui">
+      <UniqueIdentifier>{28ed8443-9bc5-44df-9619-90035f8bd5ab}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -27,6 +26,15 @@
       <Filter>Tool</Filter>
     </ClInclude>
     <ClInclude Include="Mesh.h">
+      <Filter>Tool</Filter>
+    </ClInclude>
+    <ClInclude Include="Mesh_Simplify.h">
+      <Filter>Tool</Filter>
+    </ClInclude>
+    <ClInclude Include="Tool.h">
+      <Filter>Tool</Filter>
+    </ClInclude>
+    <ClInclude Include="Vector.h">
       <Filter>Tool</Filter>
     </ClInclude>
   </ItemGroup>
@@ -63,6 +71,30 @@
     </ClCompile>
     <ClCompile Include="IBL.cpp">
       <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="LOD.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui.cpp">
+      <Filter>Imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_impl_glfw.cpp">
+      <Filter>Imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_impl_opengl3.cpp">
+      <Filter>Imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_tables.cpp">
+      <Filter>Imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_widgets.cpp">
+      <Filter>Imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_demo.cpp">
+      <Filter>Imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="imgui_draw.cpp">
+      <Filter>Imgui</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

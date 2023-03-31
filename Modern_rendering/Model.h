@@ -207,8 +207,7 @@ private:
 unsigned int TextureFromFile(const char* path, const string& directory, bool gamma)
 {
     string filename = string(path);
-    string subpath = directory.substr(0, directory.find_last_of('\\'));
-    filename = subpath + '\\' + filename;
+    filename = directory + '/' + filename;
 
     unsigned int textureID;
     glGenTextures(1, &textureID);
