@@ -96,5 +96,8 @@
     <ClCompile Include="imgui_draw.cpp">
       <Filter>Imgui</Filter>
     </ClCompile>
+    <ClCompile Include="Cartoon.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

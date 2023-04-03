@@ -1,4 +1,4 @@
-#include<glad/glad.h> // glad.c 调用glad.h中的方法
+#include<glad/glad.h>
 #include<GLFW/glfw3.h>
 
 #include"Shader.h"
@@ -10,7 +10,6 @@
 #include<glm/gtc/type_ptr.hpp>
 
 #include<iostream>
-using namespace std;
 
 GLuint SCR_WIDTH = 800;
 GLuint SCR_HEIGHT = 600;
@@ -19,28 +18,33 @@ float lastX = (float)SCR_WIDTH / 2.0;
 float lastY = (float)SCR_HEIGHT / 2.0;
 bool firstMouse = true;
 
-Camera camera(glm::vec3(0.0f, 0.0f, 10.0f));
+struct Light {
+	glm::vec3 position;
+	glm::vec3 color;
+}light;
+
+Camera camera(glm::vec3(0.0f, 0.0f, 3.0f));
 
 GLfloat deltaTime = 0.0f;
 GLfloat lastFrame = 0.0f;
 
-int offsetid = 0;
-
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void processInput(GLFWwindow* window);
-void renderSphere();
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+void renderSphere();
 void RenderQuad();
 void renderCube();
 GLuint loadTexture(const char* path);
+
 int main() {
 	glfwInit();
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 4);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
 	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+	glfwWindowHint(GLFW_SAMPLES, 4);
 
-	GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "TAA", NULL, NULL);
+	GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "Cartoon", NULL, NULL);
 
 	glfwMakeContextCurrent(window);
 	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
@@ -50,117 +54,57 @@ int main() {
 
 	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
 	{
-		cout << "error to load glad" << endl;
+		std::cout << "error to load glad" << std::endl;
 		glfwTerminate();
 		return -1;
 	}
 
+	light.position = glm::vec3(10);
+	light.color = glm::vec3(1);
+
 	glEnable(GL_DEPTH_TEST);
+	glEnable(GL_MULTISAMPLE); // 硬件AA
+	glEnable(GL_CULL_FACE);
+	glFrontFace(GL_CCW);
 
-	Shader gbuffer("shader/TAA/model.vs", "shader/TAA/model.fs");
-	Shader deferrender("shader/TAA/deferred_shading.vs", "shader/TAA/deferred_shading.fs");
-	Shader TAA("shader/TAA/TAA.vs", "shader/TAA/TAA.fs");
+	GLuint TexMap = loadTexture("resources/textures/container.jpg");
+	GLuint Ramp = loadTexture("resources/textures/Ramp_Texture0.psd");
 
-	deferrender.use();
-	deferrender.setInt("gPosition", 0);
-	deferrender.setInt("gNormal", 1);
-	deferrender.setInt("gAlbedo", 2);
-	deferrender.setInt("gVelo", 3);
+	Shader debug("shader/cartoon/debug.vs", "shader/cartoon/debug.fs");
+	debug.use();
+	debug.setInt("TexMap", 0);
 
-	gbuffer.use();
-	gbuffer.setInt("texture_diffuse1", 0);
+	Shader depth("shader/cartoon/depth.vs", "shader/cartoon/depth.fs");
 
-	TAA.use();
-	TAA.setInt("currentcolor", 0);
-	TAA.setInt("historycolor", 1);
-	TAA.setInt("gVelo", 2);
-	TAA.setInt("gPosition", 3);
+	Shader sphere("shader/cartoon/outline.vs", "shader/cartoon/outline.fs");
 
-	unsigned int textureID = loadTexture("resources/textures/pbr/wall/albedo.png");
+	Shader cartoon("shader/cartoon/cartoon.vs", "shader/cartoon/cartoon.fs");
+	cartoon.use();
+	cartoon.setInt("TexMap", 0);
+	cartoon.setInt("Ramp", 1);
+	cartoon.setInt("depthMap", 2);
 
-	GLuint gbufferFBO;
-	glGenFramebuffers(1, &gbufferFBO);
-	glBindFramebuffer(GL_FRAMEBUFFER, gbufferFBO);
-	GLuint gPosition;
-	glGenTextures(1, &gPosition);
-	glBindTexture(GL_TEXTURE_2D, gPosition);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	GLfloat outlineRange = 0.05;
+	glm::vec3 outlineColor = glm::vec3(0);
+
+#pragma region "shadow"
+	GLuint shadowFBO;
+	glGenFramebuffers(1, &shadowFBO);
+	glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO);
+
+	GLuint shadowMap;
+	glGenTextures(1, &shadowMap);
+	glBindTexture(GL_TEXTURE_2D, shadowMap);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT32F, SCR_WIDTH, SCR_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, NULL);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gPosition, 0);
-	GLuint gNormal;
-	glGenTextures(1, &gNormal);
-	glBindTexture(GL_TEXTURE_2D, gNormal);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, gNormal, 0);
-	GLuint gAlbedo;
-	glGenTextures(1, &gAlbedo);
-	glBindTexture(GL_TEXTURE_2D, gAlbedo);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, gAlbedo, 0);
-	GLuint gVelo;
-	glGenTextures(1, &gVelo);
-	glBindTexture(GL_TEXTURE_2D, gVelo);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, SCR_WIDTH, SCR_HEIGHT, 0, GL_RG, GL_FLOAT, NULL);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, gVelo, 0);
-
-	unsigned int attachment[4] = { GL_COLOR_ATTACHMENT0 ,GL_COLOR_ATTACHMENT1,GL_COLOR_ATTACHMENT2,GL_COLOR_ATTACHMENT3 };
-	glDrawBuffers(4, attachment);
-
-	unsigned int rboDepth;
-	glGenRenderbuffers(1, &rboDepth);
-	glBindRenderbuffer(GL_RENDERBUFFER, rboDepth);
-	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, SCR_WIDTH, SCR_HEIGHT);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepth);
-	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-		cout << "error to  curframe" << endl;
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST);
+	glGenerateMipmap(GL_TEXTURE_2D);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowMap, 0);
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-	GLuint currentframe;
-	glGenFramebuffers(1, &currentframe);
-	glBindFramebuffer(GL_FRAMEBUFFER, currentframe);
-	GLuint currentcolor;
-	glGenTextures(1, &currentcolor);
-	glBindTexture(GL_TEXTURE_2D, currentcolor);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, currentcolor, 0);
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-	GLuint historyframe;
-	glGenFramebuffers(1, &historyframe);
-	glBindFramebuffer(GL_FRAMEBUFFER, historyframe);
-	GLuint historycolor;
-	glGenTextures(1, &historycolor);
-	glBindTexture(GL_TEXTURE_2D, historycolor);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, SCR_WIDTH, SCR_HEIGHT, 0, GL_RGBA, GL_FLOAT, NULL);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, historycolor, 0);
-	glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-	GLuint UBO;
-	glGenBuffers(1, &UBO);
-	glBindBuffer(GL_UNIFORM_BUFFER, UBO);
-	glBufferData(GL_UNIFORM_BUFFER, 3 * sizeof(glm::mat4x4), nullptr, GL_STATIC_DRAW);
-	glBindBufferBase(GL_UNIFORM_BUFFER, 0, UBO);
-	glBindBuffer(GL_UNIFORM_BUFFER, 0);
-
-	glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (GLfloat)SCR_WIDTH / (GLfloat)SCR_HEIGHT, 0.1f, 100.0f);
-	glm::mat4 view = camera.GetViewMatrix();
-	glm::mat4 model = glm::mat4(1.0f);
-
-	glm::mat4 premodel = model;
-	glm::mat4 preview = view;
-	glm::mat4 preprojection = projection;
-
+	glBindTexture(GL_TEXTURE_2D, 0);
+#pragma endregion
 	while (!glfwWindowShouldClose(window))
 	{
 		GLfloat currentTime = glfwGetTime();
@@ -169,63 +113,57 @@ int main() {
 
 		processInput(window);
 
+		glm::mat4 model = glm::mat4(1.0f);
+		GLfloat near = 1.0f, far = 20.0f;
+		glm::mat4 lightprojection = glm::ortho(-10.0f, 10.0f, -10.0f, 10.0f, near, far);
+		glm::mat4 lightview = glm::lookAt(light.position, glm::vec3(0), glm::vec3(0, 1, 0));
+
+		glBindFramebuffer(GL_FRAMEBUFFER, shadowFBO);
+		glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+		glClear(GL_DEPTH_BUFFER_BIT);
+		depth.use();
+		depth.setMat4("model", model);
+		depth.setMat4("light_VP", lightprojection * lightview);
+		renderSphere();
+
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		glViewport(0, 0, SCR_WIDTH, SCR_HEIGHT);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 		glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		glBindBuffer(GL_UNIFORM_BUFFER, UBO);
-		glBufferSubData(GL_UNIFORM_BUFFER, 0 * sizeof(glm::mat4x4), sizeof(glm::mat4x4), &premodel);
-		glBufferSubData(GL_UNIFORM_BUFFER, 1 * sizeof(glm::mat4x4), sizeof(glm::mat4x4), &preview);
-		glBufferSubData(GL_UNIFORM_BUFFER, 2 * sizeof(glm::mat4x4), sizeof(glm::mat4x4), &preprojection);
-		glBindBuffer(GL_UNIFORM_BUFFER, 0);
+		glm::mat4 view = camera.GetViewMatrix();
+		glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (GLfloat)SCR_WIDTH / (GLfloat)SCR_HEIGHT, 0.1f, 100.0f);
 
-		//  gbuffer
-		glBindFramebuffer(GL_FRAMEBUFFER, gbufferFBO);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		view = camera.GetViewMatrix();
-		//model = glm::translate(model, glm::vec3(glm::sin(glfwGetTime()) * 0.05f, 0.0f, 0.0f));
-		gbuffer.use();
-		gbuffer.setMat4("projection", projection);
-		gbuffer.setMat4("view", view);
-		gbuffer.setMat4("model", model);
-		gbuffer.setFloat("SCR_WIDTH", SCR_WIDTH);
-		gbuffer.setFloat("SCR_HEIGHT", SCR_HEIGHT);
-		gbuffer.setInt("offsetid", offsetid++ % 8);
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, textureID);
-		renderCube();
+		glCullFace(GL_FRONT);
+		sphere.use();
+		sphere.setMat4("model", model);
+		sphere.setMat4("view", view);
+		sphere.setMat4("projection", projection);
+		sphere.setFloat("outlineRange", outlineRange);
+		sphere.setVec3("outlineColor", outlineColor);
+		renderSphere();
 
-		//  延迟着色
-		glBindFramebuffer(GL_FRAMEBUFFER, currentframe);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-		deferrender.use();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, gPosition);
+		glCullFace(GL_BACK);
+		cartoon.use();
+		cartoon.setMat4("model", model);
+		cartoon.setMat4("view", view);
+		cartoon.setMat4("projection", projection);
+
+		cartoon.setVec3("ColorTint", glm::vec3(1,0.7837446, 0.4377358));
+		cartoon.setFloat("specularScale", 0.0182);
+		cartoon.setVec3("lightPos", light.position);
+		cartoon.setVec3("lightCol", light.color);
+		cartoon.setVec3("viewPos", camera.Position);
 		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(GL_TEXTURE_2D, gNormal);
+		glBindTexture(GL_TEXTURE_2D, Ramp);
 		glActiveTexture(GL_TEXTURE2);
-		glBindTexture(GL_TEXTURE_2D, gAlbedo);
-		RenderQuad();
+		glBindTexture(GL_TEXTURE_2D, shadowMap);
+		renderSphere();
 
-		// taa
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		TAA.use();
-		glActiveTexture(GL_TEXTURE0);
-		glBindTexture(GL_TEXTURE_2D, currentcolor);
-		glActiveTexture(GL_TEXTURE1);
-		glBindTexture(GL_TEXTURE_2D, historycolor);
-		glActiveTexture(GL_TEXTURE2);
-		glBindTexture(GL_TEXTURE_2D, gVelo);
-		glActiveTexture(GL_TEXTURE3);
-		glBindTexture(GL_TEXTURE_2D, gPosition);
-		RenderQuad();
-
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, historyframe);
-		glBlitFramebuffer(0, 0, SCR_WIDTH, SCR_HEIGHT, 0, 0, SCR_WIDTH, SCR_HEIGHT, GL_COLOR_BUFFER_BIT, GL_LINEAR);
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-		premodel = model;
-		preview = view;
+		//debug.use();
+		//glActiveTexture(GL_TEXTURE0);
+		//glBindTexture(GL_TEXTURE_2D, shadowMap);		
+		//RenderQuad();
 
 		glfwSwapBuffers(window);
 		glfwPollEvents();
@@ -253,6 +191,32 @@ void processInput(GLFWwindow* window)
 		camera.ProcessKeyboard(LEFT, deltaTime);
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
 		camera.ProcessKeyboard(RIGHT, deltaTime);
+}
+
+void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
+{
+	float xpos = static_cast<float>(xposIn);
+	float ypos = static_cast<float>(yposIn);
+
+	if (firstMouse)
+	{
+		lastX = xpos;
+		lastY = ypos;
+		firstMouse = false;
+	}
+
+	float xoffset = xpos - lastX;
+	float yoffset = lastY - ypos; // reversed since y-coordinates go from bottom to top
+
+	lastX = xpos;
+	lastY = ypos;
+
+	camera.ProcessMouseMovement(xoffset, yoffset);
+}
+
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+	camera.ProcessMouseScroll(yoffset);
 }
 
 unsigned int sphereVAO = 0;
@@ -350,27 +314,6 @@ void renderSphere()
 	glDrawElements(GL_TRIANGLE_STRIP, indexCount, GL_UNSIGNED_INT, 0);
 }
 
-void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
-{
-	float xpos = static_cast<float>(xposIn);
-	float ypos = static_cast<float>(yposIn);
-
-	if (firstMouse)
-	{
-		lastX = xpos;
-		lastY = ypos;
-		firstMouse = false;
-	}
-
-	float xoffset = xpos - lastX;
-	float yoffset = lastY - ypos; // reversed since y-coordinates go from bottom to top
-
-	lastX = xpos;
-	lastY = ypos;
-
-	camera.ProcessMouseMovement(xoffset, yoffset);
-}
-
 GLuint quadVAO = 0;
 GLuint quadVBO;
 void RenderQuad()
@@ -398,42 +341,6 @@ void RenderQuad()
 	glBindVertexArray(quadVAO);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glBindVertexArray(0);
-}
-
-GLuint loadTexture(const char* path) {
-	unsigned int textureID;
-	glGenTextures(1, &textureID);
-
-	int width, height, nrComponents;
-	unsigned char* data = stbi_load(path, &width, &height, &nrComponents, 0);
-	if (data)
-	{
-		GLenum format;
-		if (nrComponents == 1)
-			format = GL_RED;
-		else if (nrComponents == 3)
-			format = GL_RGB;
-		else if (nrComponents == 4)
-			format = GL_RGBA;
-
-		glBindTexture(GL_TEXTURE_2D, textureID);
-		glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-		glGenerateMipmap(GL_TEXTURE_2D);
-
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, format == GL_RGBA ? GL_CLAMP_TO_EDGE : GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, format == GL_RGBA ? GL_CLAMP_TO_EDGE : GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-		stbi_image_free(data);
-	}
-	else
-	{
-		std::cout << "Texture failed to load at path: " << path << std::endl;
-		stbi_image_free(data);
-	}
-
-	return textureID;
 }
 
 unsigned int cubeVAO = 0;
@@ -508,7 +415,39 @@ void renderCube()
 	glBindVertexArray(0);
 }
 
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
-{
-	camera.ProcessMouseScroll(yoffset);
+
+GLuint loadTexture(const char* path) {
+	unsigned int textureID;
+	glGenTextures(1, &textureID);
+
+	int width, height, nrComponents;
+	unsigned char* data = stbi_load(path, &width, &height, &nrComponents, 0);
+	if (data)
+	{
+		GLenum format;
+		if (nrComponents == 1)
+			format = GL_RED;
+		else if (nrComponents == 3)
+			format = GL_RGB;
+		else if (nrComponents == 4)
+			format = GL_RGBA;
+
+		glBindTexture(GL_TEXTURE_2D, textureID);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, format == GL_RGBA ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, format == GL_RGBA ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+		stbi_image_free(data);
+	}
+	else
+	{
+		std::cout << "Texture failed to load at path: " << path << std::endl;
+		stbi_image_free(data);
+	}
+
+	return textureID;
 }
